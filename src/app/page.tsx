@@ -25,6 +25,8 @@ import {
   X,
   Plus,
   Minus,
+  ArrowLeft,
+  Loader2,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +38,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements } from "@stripe/react-stripe-js";
+import { CheckoutForm } from "@/components/CheckoutForm";
+
+const stripePromise = loadStripe(
+  process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!
+);
 
 const featuredStreams = [
   {
@@ -191,6 +200,10 @@ export default function Home() {
   const [selectedStream, setSelectedStream] = useState<typeof featuredStreams[0] | null>(null);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [watchTime, setWatchTime] = useState(0);
+  const [checkoutStep, setCheckoutStep] = useState<"cart" | "payment">("cart");
+  const [clientSecret, setClientSecret] = useState<string | null>(null);
+  const [isLoadingPayment, setIsLoadingPayment] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
 
   const xpToNextLevel = 10000;
   const currentProgress = (userXP / xpToNextLevel) * 100;
@@ -250,6 +263,55 @@ export default function Home() {
 
   const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const cartXP = cart.reduce((sum, item) => sum + item.xpReward * item.quantity, 0);
+
+  const handleCheckout = async () => {
+    setIsLoadingPayment(true);
+    setPaymentError(null);
+
+    try {
+      const response = await fetch("/api/payment-intent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: cart, totalXP: cartXP }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to create payment");
+      }
+
+      setClientSecret(data.clientSecret);
+      setCheckoutStep("payment");
+    } catch (error) {
+      setPaymentError(
+        error instanceof Error ? error.message : "Failed to initialize payment"
+      );
+    } finally {
+      setIsLoadingPayment(false);
+    }
+  };
+
+  const handlePaymentSuccess = () => {
+    gainXP(cartXP);
+    setCart([]);
+    setTimeout(() => {
+      setCheckoutStep("cart");
+      setClientSecret(null);
+      setIsCartOpen(false);
+    }, 3000);
+  };
+
+  const handlePaymentError = (error: string) => {
+    setPaymentError(error);
+  };
+
+  const handleCloseCart = () => {
+    setIsCartOpen(false);
+    setCheckoutStep("cart");
+    setClientSecret(null);
+    setPaymentError(null);
+  };
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-[#f0f0f5] overflow-hidden">
@@ -850,69 +912,128 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isCartOpen} onOpenChange={setIsCartOpen}>
+      <Dialog open={isCartOpen} onOpenChange={handleCloseCart}>
         <DialogContent className="max-w-md bg-[#12121a] border-[#00f0ff]/30">
           <DialogHeader>
             <DialogTitle className="font-orbitron text-xl flex items-center gap-2">
+              {checkoutStep === "payment" && (
+                <button
+                  onClick={() => {
+                    setCheckoutStep("cart");
+                    setClientSecret(null);
+                    setPaymentError(null);
+                  }}
+                  className="p-1 hover:bg-[#1a1a25] rounded-lg transition-colors"
+                >
+                  <ArrowLeft className="w-5 h-5 text-[#8888a0]" />
+                </button>
+              )}
               <ShoppingCart className="w-5 h-5 text-[#00f0ff]" />
-              Your Cart
+              {checkoutStep === "cart" ? "Your Cart" : "Checkout"}
             </DialogTitle>
           </DialogHeader>
-          <div className="max-h-[60vh] overflow-y-auto">
-            {cart.length === 0 ? (
-              <div className="text-center py-8 text-[#8888a0]">
-                <ShoppingCart className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p className="font-rajdhani">Your cart is empty</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {cart.map((item) => (
-                  <div key={item.id} className="flex items-center gap-4 p-3 bg-[#1a1a25] rounded-lg">
-                    <img src={item.image} alt={item.name} className="w-16 h-16 rounded-lg object-cover" />
-                    <div className="flex-1">
-                      <p className="font-rajdhani font-bold text-sm">{item.name}</p>
-                      <p className="text-[#00f0ff] font-orbitron text-sm">${item.price}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => updateCartQuantity(item.id, -1)}
-                        className="p-1 rounded bg-[#0a0a0f] hover:bg-[#ff00aa]/20"
-                      >
-                        <Minus className="w-4 h-4" />
-                      </button>
-                      <span className="w-8 text-center font-orbitron">{item.quantity}</span>
-                      <button
-                        onClick={() => updateCartQuantity(item.id, 1)}
-                        className="p-1 rounded bg-[#0a0a0f] hover:bg-[#00f0ff]/20"
-                      >
-                        <Plus className="w-4 h-4" />
-                      </button>
-                    </div>
+
+          {checkoutStep === "cart" ? (
+            <>
+              <div className="max-h-[60vh] overflow-y-auto">
+                {cart.length === 0 ? (
+                  <div className="text-center py-8 text-[#8888a0]">
+                    <ShoppingCart className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p className="font-rajdhani">Your cart is empty</p>
                   </div>
-                ))}
+                ) : (
+                  <div className="space-y-4">
+                    {cart.map((item) => (
+                      <div key={item.id} className="flex items-center gap-4 p-3 bg-[#1a1a25] rounded-lg">
+                        <img src={item.image} alt={item.name} className="w-16 h-16 rounded-lg object-cover" />
+                        <div className="flex-1">
+                          <p className="font-rajdhani font-bold text-sm">{item.name}</p>
+                          <p className="text-[#00f0ff] font-orbitron text-sm">${item.price}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => updateCartQuantity(item.id, -1)}
+                            className="p-1 rounded bg-[#0a0a0f] hover:bg-[#ff00aa]/20"
+                          >
+                            <Minus className="w-4 h-4" />
+                          </button>
+                          <span className="w-8 text-center font-orbitron">{item.quantity}</span>
+                          <button
+                            onClick={() => updateCartQuantity(item.id, 1)}
+                            className="p-1 rounded bg-[#0a0a0f] hover:bg-[#00f0ff]/20"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-          {cart.length > 0 && (
-            <div className="border-t border-[#00f0ff]/20 pt-4 mt-4">
-              <div className="flex justify-between mb-2">
-                <span className="font-rajdhani text-[#8888a0]">Total</span>
-                <span className="font-orbitron font-bold text-[#00f0ff]">${cartTotal.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between mb-4">
-                <span className="font-rajdhani text-[#8888a0]">XP Reward</span>
-                <span className="font-orbitron font-bold text-[#39ff14]">+{cartXP} XP</span>
-              </div>
-              <Button
-                className="w-full bg-gradient-to-r from-[#00f0ff] to-[#9945ff] font-orbitron font-bold"
-                onClick={() => {
-                  gainXP(cartXP);
-                  setCart([]);
-                  setIsCartOpen(false);
-                }}
-              >
-                Checkout & Earn XP
-              </Button>
+              {cart.length > 0 && (
+                <div className="border-t border-[#00f0ff]/20 pt-4 mt-4">
+                  <div className="flex justify-between mb-2">
+                    <span className="font-rajdhani text-[#8888a0]">Total</span>
+                    <span className="font-orbitron font-bold text-[#00f0ff]">${cartTotal.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between mb-4">
+                    <span className="font-rajdhani text-[#8888a0]">XP Reward</span>
+                    <span className="font-orbitron font-bold text-[#39ff14]">+{cartXP} XP</span>
+                  </div>
+                  {paymentError && (
+                    <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm font-rajdhani">
+                      {paymentError}
+                    </div>
+                  )}
+                  <Button
+                    className="w-full bg-gradient-to-r from-[#00f0ff] to-[#9945ff] font-orbitron font-bold"
+                    onClick={handleCheckout}
+                    disabled={isLoadingPayment}
+                  >
+                    {isLoadingPayment ? (
+                      <span className="flex items-center gap-2">
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Loading...
+                      </span>
+                    ) : (
+                      "Proceed to Payment"
+                    )}
+                  </Button>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="py-2">
+              {clientSecret ? (
+                <Elements
+                  stripe={stripePromise}
+                  options={{
+                    clientSecret,
+                    appearance: {
+                      theme: "night",
+                      variables: {
+                        colorPrimary: "#00f0ff",
+                        colorBackground: "#1a1a25",
+                        colorText: "#f0f0f5",
+                        colorDanger: "#ff4444",
+                        fontFamily: "Rajdhani, sans-serif",
+                        borderRadius: "8px",
+                      },
+                    },
+                  }}
+                >
+                  <CheckoutForm
+                    amount={Math.round(cartTotal * 100)}
+                    xpReward={cartXP}
+                    onSuccess={handlePaymentSuccess}
+                    onError={handlePaymentError}
+                  />
+                </Elements>
+              ) : (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-8 h-8 animate-spin text-[#00f0ff]" />
+                </div>
+              )}
             </div>
           )}
         </DialogContent>
