@@ -27,6 +27,7 @@ import {
   Minus,
   ArrowLeft,
   Loader2,
+  LogOut,
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -41,6 +42,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements } from "@stripe/react-stripe-js";
 import { CheckoutForm } from "@/components/CheckoutForm";
+import { useAuth } from "@/contexts/AuthContext";
+import { AuthModal } from "@/components/AuthModal";
 
 const stripePromise = loadStripe(
   process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!
@@ -191,8 +194,10 @@ interface CartItem {
 }
 
 export default function Home() {
-  const [userXP, setUserXP] = useState(7850);
-  const [userLevel, setUserLevel] = useState(12);
+  const { user, profile, loading: authLoading, signOut } = useAuth();
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [userXP, setUserXP] = useState(0);
+  const [userLevel, setUserLevel] = useState(1);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [showXPPopup, setShowXPPopup] = useState(false);
   const [xpGained, setXpGained] = useState(0);
@@ -204,6 +209,34 @@ export default function Home() {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [isLoadingPayment, setIsLoadingPayment] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      setShowAuthModal(true);
+    }
+  }, [authLoading, user]);
+
+  useEffect(() => {
+    if (profile) {
+      setUserXP(profile.xp);
+      setUserLevel(profile.level);
+    }
+  }, [profile]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-[#00f0ff] mx-auto mb-4" />
+          <p className="font-orbitron text-[#8888a0]">Loading Arena...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthModal isOpen={showAuthModal} onClose={() => {}} />;
+  }
 
   const xpToNextLevel = 10000;
   const currentProgress = (userXP / xpToNextLevel) * 100;
@@ -385,6 +418,16 @@ export default function Home() {
                 )}
               </motion.button>
 
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={signOut}
+                className="hidden sm:flex p-2 sm:p-3 rounded-full bg-[#12121a] neon-border"
+                title="Sign Out"
+              >
+                <LogOut className="w-5 h-5 text-[#8888a0]" />
+              </motion.button>
+
               <button
                 onClick={() => setIsMenuOpen(!isMenuOpen)}
                 className="md:hidden p-2 rounded-lg bg-[#12121a] neon-border"
@@ -415,6 +458,13 @@ export default function Home() {
                   <Crown className="w-4 h-4 text-[#ff00aa]" />
                   <span className="font-orbitron text-sm">LVL {userLevel}</span>
                 </div>
+                <button
+                  onClick={signOut}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-[#12121a] font-rajdhani font-semibold text-[#8888a0] hover:text-[#ff00aa] hover:bg-[#1a1a25] transition-colors"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Sign Out
+                </button>
               </div>
             </motion.div>
           )}
